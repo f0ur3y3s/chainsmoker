@@ -49,6 +49,12 @@ def parse_args(cli: Optional[CLIManager] = None):
         action="store_true",
         help="Show this help message and exit",
     )
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="Find all possible solutions instead of just the first one",
+    )
 
     args = parser.parse_args()
 

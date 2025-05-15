@@ -19,7 +19,7 @@ def main():
     analyzer.parse_gadget_file()
     analyzer.build_transfer_graph()
 
-    chain = analyzer.find_transfer_chain(args.src, args.dst, args.depth)
+    chain = analyzer.find_transfer_chain(args.src, args.dst, args.depth, args.all)
     analyzer.print_transfer_chain(chain)
 
     strict_str = " (strict mode)" if analyzer.strict_mode else ""
