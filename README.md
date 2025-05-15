@@ -19,6 +19,19 @@ A rop gadget chain creator to load registers.
 
 ## Installation
 
+## Testing
+
+```bash
+hatch shell
+python -m chainsmoker
+```
+
+To remove previous environments, run
+
+```bash
+hatch env prune
+```
+
 ## TODO
 
 - Add "do not touch these registers"

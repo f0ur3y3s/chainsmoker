@@ -1,7 +1,5 @@
 import re
-import sys
 import os
-import argparse
 from collections import defaultdict, deque
 
 
@@ -39,13 +37,13 @@ class Chainsmoker:
             # Check if file exists
             if not os.path.exists(filepath):
                 print(f"Error: File '{filepath}' does not exist.")
-                sys.exit(1)
+                exit()
 
             # Check file size
             file_size = os.path.getsize(filepath)
             if file_size == 0:
                 print(f"Error: File '{filepath}' is empty.")
-                sys.exit(1)
+                exit()
 
             print(f"Reading file: {filepath} (Size: {file_size} bytes)")
 
@@ -138,13 +136,13 @@ class Chainsmoker:
 
         except FileNotFoundError:
             print(f"Error: File '{filepath}' not found.")
-            sys.exit(1)
+            exit()
         except PermissionError:
             print(f"Error: No permission to read file '{filepath}'.")
-            sys.exit(1)
+            exit()
         except Exception as e:
             print(f"Error parsing file: {e}")
-            sys.exit(1)
+            exit()
 
     def build_transfer_graph(self):
         """Build a graph of register transfers based on the gadgets."""
@@ -418,56 +416,3 @@ class Chainsmoker:
 
         print("-" * 50)
 
-
-def main():
-    parser = argparse.ArgumentParser(description="Find ROP gadget chains to transfer values between registers.")
-    parser.add_argument("file", nargs="?", help="Path to the file containing ROP gadgets")
-    parser.add_argument("--src", dest="src", help="Source register (e.g., rax, r8)")
-    parser.add_argument("--dst", dest="dst", help="Destination register (e.g., rcx, r9)")
-    parser.add_argument("-d", "--depth", type=int, default=3, help="Maximum chain depth (default: 3)")
-    parser.add_argument("--list-instructions", action="store_true", help="List supported instructions")
-    parser.add_argument("--mode", choices=["32", "64"], help="Register size mode: 32-bit or 64-bit registers only")
-    parser.add_argument("--strict", action="store_true", help="Strict mode: reject any gadgets mixing register sizes")
-    args = parser.parse_args()
-
-    # Support both named and positional arguments for src/dst
-    for arg in sys.argv:
-        if arg.startswith("src="):
-            args.src = arg.split("=")[1]
-        elif arg.startswith("dst="):
-            args.dst = arg.split("=")[1]
-
-    analyzer = Chainsmoker(
-        args.file if not args.list_instructions else None, reg_mode=args.mode, strict_mode=args.strict
-    )
-
-    if args.list_instructions:
-        analyzer.print_supported_instructions()
-        sys.exit(0)
-
-    if not args.src or not args.dst:
-        print("Error: Source (src) and destination (dst) registers must be specified.")
-        print("Usage examples:")
-        print("  python rop_chain.py gadgets.txt --src rax --dst rcx")
-        print("  python rop_chain.py gadgets.txt src=rax dst=rcx")
-        print("  python rop_chain.py --list-instructions # To see supported instructions")
-        sys.exit(1)
-
-    chain = analyzer.find_transfer_chain(args.src, args.dst, args.depth)
-    analyzer.print_transfer_chain(chain)
-
-    # Print stats
-    strict_str = " (strict mode)" if analyzer.strict_mode else ""
-    print(f"Analyzed {len(analyzer.gadgets)} gadgets")
-    reg_mode_str = f" ({analyzer.reg_mode}-bit mode{strict_str})" if analyzer.reg_mode else ""
-    print(f"Found {len(analyzer.register_transfers)} different register transfers{reg_mode_str}")
-
-    # If no chain found, print available transfers for debugging
-    if not chain:
-        print("\nAvailable single-step transfers:")
-        for (src, dst), gadgets in analyzer.register_transfers.items():
-            print(f"{src} -> {dst}: {len(gadgets)} gadget(s)")
-
-
-if __name__ == "__main__":
-    main()
