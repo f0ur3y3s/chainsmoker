@@ -9,7 +9,7 @@ class Chainsmoker:
     def __init__(
         self,
         gadget_file: Path,
-        reg_mode: str | None = None,
+        reg_mode: int | None = None,
         strict_mode: bool = False,
         verbose: bool = False,
         cli: CLIManager | None = None,
@@ -184,10 +184,10 @@ class Chainsmoker:
                     continue
 
             # Skip instructions that contain register-size mismatches if mode is set
-            if self.reg_mode == "64" and self.strict_mode and self._contains_32bit_ops(instructions, reg32_set):
+            if self.reg_mode == 64 and self.strict_mode and self._contains_32bit_ops(instructions, reg32_set):
                 continue
 
-            if self.reg_mode == "32" and self.strict_mode and self._contains_64bit_ops(instructions, reg64_set):
+            if self.reg_mode == 32 and self.strict_mode and self._contains_64bit_ops(instructions, reg64_set):
                 continue
 
             # Look for direct register transfers (push/pop, mov)
@@ -247,10 +247,10 @@ class Chainsmoker:
 
                             # For 32-bit mode, keep the original registers
                             # For 64-bit mode, use the mapped registers
-                            if self.reg_mode == "32":
+                            if self.reg_mode == 32:
                                 if self._should_include_registers(reg32_src, reg32, reg32_set, reg64_set):
                                     self.register_transfers[(reg32_src, reg32)].append(gadget)
-                            elif self.reg_mode == "64":
+                            elif self.reg_mode == 64:
                                 if self._should_include_registers(src_reg64, dst_reg64, reg32_set, reg64_set):
                                     self.register_transfers[(src_reg64, dst_reg64)].append(gadget)
                             else:
@@ -276,11 +276,11 @@ class Chainsmoker:
 
                             # For 32-bit mode, keep the original registers
                             # For 64-bit mode, use the mapped registers
-                            if self.reg_mode == "32":
+                            if self.reg_mode == 32:
                                 if self._should_include_registers(reg32, reg32_src, reg32_set, reg64_set):
                                     self.register_transfers[(reg32, reg32_src)].append(gadget)
                                     self.register_transfers[(reg32_src, reg32)].append(gadget)
-                            elif self.reg_mode == "64":
+                            elif self.reg_mode == 64:
                                 if self._should_include_registers(reg1_64, reg2_64, reg32_set, reg64_set):
                                     self.register_transfers[(reg1_64, reg2_64)].append(gadget)
                                     self.register_transfers[(reg2_64, reg1_64)].append(gadget)
@@ -326,11 +326,11 @@ class Chainsmoker:
         reg32_set = set(["eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp"] + [f"r{i}d" for i in range(8, 16)])
         reg64_set = set(["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp"] + [f"r{i}" for i in range(8, 16)])
 
-        if self.reg_mode == "32" and (src_reg not in reg32_set or dst_reg not in reg32_set):
+        if self.reg_mode == 32 and (src_reg not in reg32_set or dst_reg not in reg32_set):
             self.cli.print(f"Error: In 32-bit mode, must use 32-bit registers (e.g., eax, ecx)", "error")
             return []
 
-        if self.reg_mode == "64" and (src_reg not in reg64_set or dst_reg not in reg64_set):
+        if self.reg_mode == 64 and (src_reg not in reg64_set or dst_reg not in reg64_set):
             self.cli.print(f"Error: In 64-bit mode, must use 64-bit registers (e.g., rax, rcx)", "error")
             return []
 
@@ -405,9 +405,9 @@ class Chainsmoker:
             warning = ""
 
             if self.reg_mode:
-                if self.reg_mode == "64" and self._contains_32bit_ops(gadget["instructions"], reg32_set):
+                if self.reg_mode == 64 and self._contains_32bit_ops(gadget["instructions"], reg32_set):
                     warning = "[yellow]32-bit registers may zero extend to 64-bit[/yellow]"
-                elif self.reg_mode == "32" and self._contains_64bit_ops(gadget["instructions"], reg64_set):
+                elif self.reg_mode == 32 and self._contains_64bit_ops(gadget["instructions"], reg64_set):
                     warning = "[yellow]64-bit registers may be incompatible with 32-bit mode[/yellow]"
 
             address = f"[bold blue]{gadget['address']}[/bold blue]"
@@ -428,9 +428,9 @@ class Chainsmoker:
 
     def _should_include_registers(self, reg1, reg2, reg32_set, reg64_set):
         """Determine if registers should be included based on bitness mode."""
-        if self.reg_mode == "32":
+        if self.reg_mode == 32:
             return reg1 in reg32_set and reg2 in reg32_set
-        elif self.reg_mode == "64":
+        elif self.reg_mode == 64:
             return reg1 in reg64_set and reg2 in reg64_set
         else:
             return True
