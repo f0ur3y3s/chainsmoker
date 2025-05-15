@@ -4,7 +4,37 @@ version = "0.0.1"
 description = "A cli interface to find transfer chains for registers"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "f0ur3y3s", email = "your.email@example.com" }]
+maintainers = [{ name = "f0ur3y3s", email = "your.email@example.com" }]
+keywords = [
+    "security",
+    "rop",
+    "gadget-chain",
+    "exploit-development",
+    "binary-analysis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+]
 dependencies = ["rich"]
+
+[project.urls]
+"Homepage" = "https://github.com/f0ur3y3s/chainsmoker"
+"Bug Tracker" = "https://github.com/f0ur3y3s/chainsmoker/issues"
+"Documentation" = "https://github.com/f0ur3y3s/chainsmoker#readme"
+
 
 [project.scripts]
 chainsmoker = "chainsmoker.main:main"
@@ -12,6 +42,9 @@ chainsmoker = "chainsmoker.main:main"
 [tool.hatch.build]
 packages = ["src/chainsmoker"]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/chainsmoker"]
+
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"

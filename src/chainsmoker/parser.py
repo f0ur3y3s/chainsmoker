@@ -1,7 +1,7 @@
 import argparse
 from typing import Optional
 from pathlib import Path
-from chainsmoker.console import CLIManager
+from .console import CLIManager
 
 
 def parse_args(cli: Optional[CLIManager] = None):
