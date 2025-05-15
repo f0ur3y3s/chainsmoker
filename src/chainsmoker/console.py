@@ -13,6 +13,7 @@ class Style:
     error: str = "bold red"
     success: str = "bold green"
     header: str = "bold white"
+    warning: str = "bold yellow"
     default: str = "white"
 
 
@@ -118,6 +119,7 @@ if __name__ == "__main__":
     cli.print("test error", style="error")
     cli.print("test success", style="success")
     cli.print("test header", style="header")
+    cli.print("test warning", style="warning")
     cli.print("test default")
     cli.print("test default with indent", indent=4)
     cli.print("Hello, World!", style="bold blue")

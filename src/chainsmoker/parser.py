@@ -38,6 +38,12 @@ def parse_args(cli: Optional[CLIManager] = None):
         help="Maximum chain depth to search",
     )
     parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose output",
+    )
+    parser.add_argument(
         "--help",
         "-h",
         action="store_true",

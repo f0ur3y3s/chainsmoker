@@ -1,64 +1,89 @@
 import re
 import os
+from pathlib import Path
 from collections import defaultdict, deque
+from .console import CLIManager
 
 
 class Chainsmoker:
-    def __init__(self, gadget_file, reg_mode=None, strict_mode=False):
+    def __init__(
+        self,
+        gadget_file: Path,
+        reg_mode: str | None = None,
+        strict_mode: bool = False,
+        verbose: bool = False,
+        cli: CLIManager | None = None,
+    ):
         self.gadgets = []
         self.register_transfers = defaultdict(list)
-        self.reg_mode = reg_mode  # Can be "32" for 32-bit or "64" for 64-bit registers, or None for all
-        self.strict_mode = strict_mode  # If True, enforce strict register size consistency
-        if gadget_file:  # Only parse if a file is provided
-            self.parse_gadget_file(gadget_file)
-            self.build_transfer_graph()
+        self.reg_mode = reg_mode
+        self.strict_mode = strict_mode
+        self.gadget_file: Path = gadget_file
+        self.verbose = verbose
+        self.cli = cli if cli else CLIManager()
 
-    def _contains_32bit_ops(self, instructions, reg32_set):
-        """Check if the instructions contain 32-bit operations that would be incompatible with 64-bit mode."""
-        # Look for any 32-bit register in the instruction
+    def _contains_32bit_ops(self, instructions: str, reg32_set: set[str]) -> bool:
+        """Check if the instructions contain 32-bit operations that would be incompatible with 64-bit mode
+
+        Args:
+            instructions (str): The instructions to check.
+            reg32_set (set[str]): The set of 32-bit registers.
+
+        Returns:
+            bool: True if 32-bit operations are found, False otherwise.
+        """
         for reg in reg32_set:
             # Check for the register as a whole word
             if re.search(r"\b" + reg + r"\b", instructions):
                 return True
         return False
 
-    def _contains_64bit_ops(self, instructions, reg64_set):
-        """Check if the instructions contain 64-bit operations that would be incompatible with 32-bit mode."""
-        # Look for any 64-bit register in the instruction
+    def _contains_64bit_ops(self, instructions: str, reg64_set: set[str]) -> bool:
+        """Check if the instructions contain 64-bit operations that would be incompatible with 32-bit mode
+
+        Args:
+            instructions (str): The instructions to check.
+            reg64_set (set[str]): The set of 64-bit registers.
+
+        Returns:
+            bool: True if 64-bit operations are found, False otherwise.
+        """
         for reg in reg64_set:
             # Check for the register as a whole word (not part of another register name)
             if re.search(r"\b" + reg + r"\b", instructions):
                 return True
         return False
 
-    def parse_gadget_file(self, filepath):
+    def _print_debug(self, message):
+        """Print debug messages if verbose mode is enabled."""
+        if self.verbose:
+            self.cli.print(f"[cyan][DEBUG][/cyan] {message}")
+
+    def parse_gadget_file(self):
         """Parse the gadget file and extract gadget information."""
         try:
-            # Check if file exists
-            if not os.path.exists(filepath):
-                print(f"Error: File '{filepath}' does not exist.")
+            if not self.gadget_file.exists():
+                self.cli.print(f"Error: File '{self.gadget_file}' does not exist.", "error")
                 exit()
 
-            # Check file size
-            file_size = os.path.getsize(filepath)
+            file_size = self.gadget_file.stat().st_size
+
             if file_size == 0:
-                print(f"Error: File '{filepath}' is empty.")
+                self.cli.print(f"Error: File '{self.gadget_file}' is empty.")
                 exit()
 
-            print(f"Reading file: {filepath} (Size: {file_size} bytes)")
+            self._print_debug(f"Reading file: {self.gadget_file} (Size: {file_size} bytes)")
 
-            # Try different encoding methods
             encodings = ["utf-8", "utf-16", "utf-16-le", "utf-16-be", "latin-1"]
 
             for encoding in encodings:
                 try:
-                    print(f"Trying encoding: {encoding}")
-                    with open(filepath, "r", encoding=encoding, errors="replace") as f:
+                    self._print_debug(f"Trying encoding: {encoding}")
+                    with open(self.gadget_file, "r", encoding=encoding, errors="replace") as f:
                         line_count = 0
                         parsed_count = 0
                         content = f.read()
 
-                        # Remove BOM if present
                         if content.startswith("\ufeff"):
                             content = content[1:]
 
@@ -70,12 +95,11 @@ class Chainsmoker:
                             if not line:
                                 continue
 
-                            # Print first few lines for debugging
                             if line_count <= 5:
-                                print(f"Sample line {line_count}: {line}")
+                                self._print_debug(f"Sample line {line_count}: {line}")
 
-                            # Extract address and instructions
                             match = re.match(r"(0x[0-9a-fA-F]+):\s+(.*)", line)
+
                             if match:
                                 parsed_count += 1
                                 address = match.group(1)
@@ -83,19 +107,18 @@ class Chainsmoker:
                                 self.gadgets.append({"address": address, "instructions": instructions})
 
                         if parsed_count > 0:
-                            print(f"Successfully parsed {parsed_count} gadgets using {encoding} encoding")
+                            self._print_debug(f"Successfully parsed {parsed_count} gadgets using {encoding} encoding")
                             break
+
                 except UnicodeDecodeError:
                     continue
 
             if len(self.gadgets) == 0:
-                print("Warning: No gadgets could be parsed. Here's another approach:")
+                self.cli.print("Warning: No gadgets could be parsed, attempting binary mode.", "warning")
 
-                # Try binary mode and handle byte by byte
-                with open(filepath, "rb") as f:
+                with open(self.gadget_file, "rb") as f:
                     content = f.read()
 
-                    # Strip BOM if present
                     if content.startswith(b"\xff\xfe"):
                         content = content[2:]
                     elif content.startswith(b"\xfe\xff"):
@@ -103,7 +126,6 @@ class Chainsmoker:
                     elif content.startswith(b"\xef\xbb\xbf"):
                         content = content[3:]
 
-                    # Convert to string, ignoring errors
                     text = content.decode("utf-8", errors="ignore")
                     lines = text.splitlines()
 
@@ -113,35 +135,35 @@ class Chainsmoker:
                     for line in lines:
                         line_count += 1
                         line = line.strip()
+
                         if not line:
                             continue
 
-                        # Print first few lines for debugging
                         if line_count <= 5:
-                            print(f"Sample line {line_count}: {line}")
+                            self._print_debug(f"Sample line {line_count}: {line}")
 
-                        # Extract address and instructions
                         match = re.match(r"(0x[0-9a-fA-F]+):\s+(.*)", line)
+
                         if match:
                             parsed_count += 1
                             address = match.group(1)
                             instructions = match.group(2).strip()
                             self.gadgets.append({"address": address, "instructions": instructions})
 
-                    print(f"Read {line_count} lines, parsed {parsed_count} gadgets using binary approach")
+                    self._print_debug(f"Read {line_count} lines, parsed {parsed_count} gadgets using binary approach")
 
             if len(self.gadgets) == 0:
-                print("Warning: No gadgets could be parsed. Check file format.")
-                print("Expected format: 0xADDRESS: instruction1; instruction2; ret;")
+                self.cli.print("Warning: No gadgets could be parsed. Check file format.", "warning")
+                self.cli.print("Expected format: 0xADDRESS: instruction1; instruction2; ret;")
 
         except FileNotFoundError:
-            print(f"Error: File '{filepath}' not found.")
+            self.cli.print(f"Error: File '{self.gadget_file}' not found.", "error")
             exit()
         except PermissionError:
-            print(f"Error: No permission to read file '{filepath}'.")
+            self.cli.print(f"Error: No permission to read file '{self.gadget_file}'.", "error")
             exit()
         except Exception as e:
-            print(f"Error parsing file: {e}")
+            self.cli.print(f"Error parsing file: {e}", "error")
             exit()
 
     def build_transfer_graph(self):
@@ -298,30 +320,28 @@ class Chainsmoker:
 
     def find_transfer_chain(self, src_reg, dst_reg, max_depth=5):
         """Find a chain of gadgets to transfer a value from src_reg to dst_reg."""
-        print(f"Searching for transfer chain: {src_reg} -> {dst_reg} (max depth: {max_depth})")
+        self.cli.print(f"Searching for transfer chain: {src_reg} -> {dst_reg} (max depth: {max_depth})")
 
         # Check if registers match the selected mode
         reg32_set = set(["eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp"] + [f"r{i}d" for i in range(8, 16)])
         reg64_set = set(["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp"] + [f"r{i}" for i in range(8, 16)])
 
         if self.reg_mode == "32" and (src_reg not in reg32_set or dst_reg not in reg32_set):
-            print(f"Error: In 32-bit mode, must use 32-bit registers (e.g., eax, ecx)")
+            self.cli.print(f"Error: In 32-bit mode, must use 32-bit registers (e.g., eax, ecx)", "error")
             return []
 
         if self.reg_mode == "64" and (src_reg not in reg64_set or dst_reg not in reg64_set):
-            print(f"Error: In 64-bit mode, must use 64-bit registers (e.g., rax, rcx)")
+            self.cli.print(f"Error: In 64-bit mode, must use 64-bit registers (e.g., rax, rcx)", "error")
             return []
 
         if src_reg == dst_reg:
-            print("Source and destination registers are the same, no transfer needed.")
+            self.cli.print("Source and destination registers are the same, no transfer needed.", "warning")
             return []
 
-        # Direct transfer
         if (src_reg, dst_reg) in self.register_transfers:
-            print(f"Found direct transfer: {src_reg} -> {dst_reg}")
+            self.cli.print(f"Found direct transfer: {src_reg} -> {dst_reg}", "success")
             return self.register_transfers[(src_reg, dst_reg)]
 
-        # BFS to find a path
         visited = set()
         queue = deque([(src_reg, [])])
 
@@ -333,57 +353,78 @@ class Chainsmoker:
 
             visited.add(current_reg)
 
-            # Debug output for explored paths
             if len(path) == 0:
-                print(f"Exploring from {current_reg} (current path: start)")
+                self._print_debug(f"Exploring from {current_reg} (current path: start)")
             else:
                 path_str = " -> ".join([g["address"] for g in path])
-                print(f"Exploring from {current_reg} (current path: {path_str})")
+                self._print_debug(f"Exploring from {current_reg} (current path: {path_str})")
 
             found_next = False
+
             for next_reg_pair, gadgets in self.register_transfers.items():
                 if next_reg_pair[0] == current_reg and next_reg_pair[1] not in visited:
                     found_next = True
                     next_reg = next_reg_pair[1]
-                    new_path = path + [gadgets[0]]  # Just use the first gadget for simplicity
+                    new_path = path + [gadgets[0]]
+                    self._print_debug(f"Found transfer: {current_reg} -> {next_reg}")
 
                     if next_reg == dst_reg:
-                        print(f"Found path: {src_reg} -> {next_reg}")
+                        self._print_debug(f"Found path: {src_reg} -> {next_reg}")
                         return new_path
 
                     queue.append((next_reg, new_path))
 
             if not found_next:
-                print(f"No outgoing transfers from {current_reg}")
+                self._print_debug(f"No outgoing transfers from {current_reg}")
 
-        print(f"No path found from {src_reg} to {dst_reg} within depth {max_depth}")
+        self.cli.print(f"No path found from {src_reg} to {dst_reg} within depth {max_depth}", "warning")
         return []
 
     def print_transfer_chain(self, chain):
-        """Print a formatted chain of gadgets."""
+        """Print a formatted table of gadget chain."""
         if not chain:
-            print("No valid transfer chain found.")
+            self.cli.print("No valid transfer chain found.", style="error")
             return
 
-        print("Transfer Chain:")
-        print("-" * 50)
+        table = self.cli.create_table(
+            "Transfer Chain",
+            [
+                ("Step", "header", "center"),
+                ("Address", "title", "left"),
+                ("Instructions", "default", "left"),
+                ("Warnings", "error", "left"),
+            ],
+            expand=True,
+            border_style="success",
+        )
+
+        reg32_set = set(["eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp"] + [f"r{i}d" for i in range(8, 16)])
+        reg64_set = set(["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp"] + [f"r{i}" for i in range(8, 16)])
+
         for i, gadget in enumerate(chain):
-            print(f"Step {i + 1}: {gadget['address']} - {gadget['instructions']}")
+            warning = ""
 
-            # Add a warning if gadget appears to mix register sizes
             if self.reg_mode:
-                reg32_set = set(
-                    ["eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp"] + [f"r{i}d" for i in range(8, 16)]
-                )
-                reg64_set = set(
-                    ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp"] + [f"r{i}" for i in range(8, 16)]
-                )
-
                 if self.reg_mode == "64" and self._contains_32bit_ops(gadget["instructions"], reg32_set):
-                    print(f"  WARNING: This gadget uses 32-bit registers which may zero extend to 64-bit")
+                    warning = "[yellow]32-bit registers may zero extend to 64-bit[/yellow]"
                 elif self.reg_mode == "32" and self._contains_64bit_ops(gadget["instructions"], reg64_set):
-                    print(f"  WARNING: This gadget uses 64-bit registers which may be incompatible with 32-bit mode")
-        print("-" * 50)
+                    warning = "[yellow]64-bit registers may be incompatible with 32-bit mode[/yellow]"
+
+            address = f"[bold blue]{gadget['address']}[/bold blue]"
+
+            instructions = gadget["instructions"]
+            instructions = re.sub(r"\b(mov|push|pop|xchg)\b", r"[bold green]\1[/bold green]", instructions)
+
+            for reg in reg32_set | reg64_set:
+                instructions = re.sub(r"\b" + reg + r"\b", r"[cyan]\g<0>[/cyan]", instructions)
+
+            table.add_row(f"{i + 1}", address, instructions, warning)
+
+        self.cli.config.console.print(table)
+
+        if self.verbose:
+            summary = f"Chain length: {len(chain)} gadgets"
+            self.cli.print(f"[dim][italic]{summary}[/italic][/dim]")
 
     def _should_include_registers(self, reg1, reg2, reg32_set, reg64_set):
         """Determine if registers should be included based on bitness mode."""
@@ -392,27 +433,4 @@ class Chainsmoker:
         elif self.reg_mode == "64":
             return reg1 in reg64_set and reg2 in reg64_set
         else:
-            return True  # Include all if no mode specified
-
-    def print_supported_instructions(self):
-        """Print the types of instructions supported by the analyzer."""
-        print("Supported Instructions:")
-        print("-" * 50)
-        print("- mov reg1, reg2    : Move value from reg2 to reg1")
-        print("- push reg1; pop reg2: Transfer value from reg1 to reg2")
-        print("- xchg reg1, reg2   : Exchange values between reg1 and reg2")
-
-        if self.reg_mode == "32":
-            print("\nCurrent mode: 32-bit registers only")
-            print("Supported registers: eax, ebx, ecx, edx, esi, edi, esp, ebp, r8d-r15d")
-        elif self.reg_mode == "64":
-            print("\nCurrent mode: 64-bit registers only")
-            print("Supported registers: rax, rbx, rcx, rdx, rsi, rdi, rsp, rbp, r8-r15")
-        else:
-            print("\nCurrent mode: All registers (both 32-bit and 64-bit)")
-
-        if self.strict_mode:
-            print("\nStrict mode: ON (rejecting gadgets that mix register sizes)")
-
-        print("-" * 50)
-
+            return True

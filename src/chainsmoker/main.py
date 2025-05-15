@@ -1,3 +1,4 @@
+from pathlib import Path
 from .chainsmoker import Chainsmoker
 from .parser import parse_args
 from .console import CLIManager
@@ -8,10 +9,15 @@ def main():
     args = parse_args(cli)
 
     analyzer = Chainsmoker(
-        args.file,
+        Path(args.file),
         reg_mode=args.mode,
         strict_mode=args.strict,
+        verbose=args.verbose,
+        cli=cli,
     )
+
+    analyzer.parse_gadget_file()
+    analyzer.build_transfer_graph()
 
     chain = analyzer.find_transfer_chain(args.src, args.dst, args.depth)
     analyzer.print_transfer_chain(chain)
