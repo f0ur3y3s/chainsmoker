@@ -1,11 +1,10 @@
 import argparse
 from typing import Optional
 from pathlib import Path
-from .console import CLIManager
+from chainsmoker.console import CLIManager
 
 
 def parse_args(cli: Optional[CLIManager] = None):
-    """Parse command line arguments with styled help using CLIManager."""
     if cli is None:
         cli = CLIManager()
 
