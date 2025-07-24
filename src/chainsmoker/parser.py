@@ -2,6 +2,7 @@ import argparse
 from typing import Optional
 from pathlib import Path
 from .console import CLIManager
+from .architecture import get_available_architectures
 
 
 def parse_args(cli: Optional[CLIManager] = None):
@@ -19,12 +20,18 @@ def parse_args(cli: Optional[CLIManager] = None):
     parser.add_argument("--dst", "-d", type=str, help="Destination register")
 
     parser.add_argument(
+        "--arch",
+        type=str,
+        choices=get_available_architectures(),
+        default="x64",
+        help="Target architecture (x86, x64, arm64)",
+    )
+    parser.add_argument(
         "--mode",
         "-m",
         type=int,
         choices=[32, 64],
-        default=64,
-        help="Register mode: 32 or 64 bit",
+        help="Register mode: 32 or 64 bit (deprecated, use --arch instead)",
     )
     parser.add_argument(
         "--strict",
@@ -97,8 +104,9 @@ def parse_args(cli: Optional[CLIManager] = None):
 def show_help(cli: CLIManager, parser: argparse.ArgumentParser):
     help_text = (
         "\n[italic green]Usage:[/]\n"
-        "  chainsmoker <options> gadget_file.txt --src rax --dst rbx\n"
-        "  chainsmoker <options> gadget_file.txt src=rax dst=rbx\n"
+        "  chainsmoker gadget_file.txt --src rax --dst rbx --arch x64\n"
+        "  chainsmoker gadget_file.txt --src x0 --dst x1 --arch arm64\n"
+        "  chainsmoker gadget_file.txt --src eax --dst ebx --arch x86\n"
     )
 
     cli.print(help_text, indent=0)

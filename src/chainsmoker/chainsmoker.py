@@ -3,10 +3,9 @@ import mmap
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict, deque
+from typing import Optional
 from .console import CLIManager
-
-REG32_SET = set(["eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp"] + [f"r{i}d" for i in range(8, 16)])
-REG64_SET = set(["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp"] + [f"r{i}" for i in range(8, 16)])
+from .architecture import get_architecture, get_available_architectures, Architecture
 
 
 @dataclass
@@ -22,7 +21,8 @@ class Chainsmoker:
     def __init__(
         self,
         gadget_file: Path,
-        reg_mode: int | None = None,
+        architecture: str = "x64",
+        reg_mode: Optional[str] = None,
         strict_mode: bool = False,
         verbose: bool = False,
         cli: CLIManager | None = None,
@@ -31,34 +31,31 @@ class Chainsmoker:
 
         Args:
             gadget_file (Path): Path to the gadget file to analyze.
-            reg_mode (int | None, optional): 32 or 64 bit register mode specification. Defaults to None, which means no specific mode is enforced.
-            strict_mode (bool, optional): Only use 32 or 64 bit. Defaults to False, which means both 32 and 64 bit registers can be used.
+            architecture (str): Architecture name ('x86', 'x64', 'arm64'). Defaults to 'x64'.
+            reg_mode (str | None, optional): Register mode specification (e.g., '32', '64'). Defaults to architecture default.
+            strict_mode (bool, optional): Only use registers of the specified mode. Defaults to False.
             verbose (bool, optional): Enables verbose output for debugging. Defaults to False.
             cli (CLIManager | None, optional): Console class. Defaults to None.
         """
         self.gadgets = []
         self.register_transfers = defaultdict(list)
         self.gadget_file: Path = gadget_file
-        self.reg_mode: int | None = reg_mode
+        self.architecture: Architecture = get_architecture(architecture)
+        self.reg_mode: Optional[str] = reg_mode or self.architecture.default_mode
         self.strict_mode: bool = strict_mode
         self.verbose: bool = verbose
         self.cli = cli if cli else CLIManager()
 
-    def _contains_bit_ops(self, instructions: str, reg_set: set[str]) -> bool:
-        """Check if the instructions contain operations on registers that would be incompatible with the specified mode
+    def _contains_incompatible_registers(self, instructions: str) -> bool:
+        """Check if the instructions contain registers incompatible with the current mode.
 
         Args:
             instructions (str): The instructions to check.
-            reg_set (set[str]): The set of registers to check against.
 
         Returns:
-            bool: True if operations on incompatible registers are found, False otherwise.
+            bool: True if incompatible registers are found, False otherwise.
         """
-        for reg in reg_set:
-            # check for the register as a whole word (not part of another register name)
-            if re.search(r"\b" + reg + r"\b", instructions):
-                return True
-        return False
+        return self.architecture.contains_incompatible_registers(instructions, self.reg_mode)
 
     def _print_debug(self, message: str) -> None:
         """Print debug messages if verbose mode is enabled.
@@ -79,12 +76,7 @@ class Chainsmoker:
         Returns:
             bool: True if both registers are compatible with the specified mode, False otherwise.
         """
-        if self.reg_mode == 32:
-            return reg1 in REG32_SET and reg2 in REG32_SET
-        elif self.reg_mode == 64:
-            return reg1 in REG64_SET and reg2 in REG64_SET
-        else:
-            return True
+        return self.architecture.should_include_registers(reg1, reg2, self.reg_mode)
 
     def _process_lines(self, lines: list[str], pattern: re.Pattern) -> None:
         """Process lines and extract gadgets using the provided regex pattern."""
@@ -206,135 +198,11 @@ class Chainsmoker:
     def build_transfer_graph(self):
         """Build a graph of register transfers based on the gadgets."""
         for gadget in self.gadgets:
-            instructions = gadget.instructions
+            # Use architecture-specific transfer extraction
+            transfers = self.architecture.extract_transfers(gadget, self.reg_mode, self.strict_mode)
 
-            if self.strict_mode:
-                has_32bit = self._contains_bit_ops(instructions, REG32_SET)
-                has_64bit = self._contains_bit_ops(instructions, REG64_SET)
-                if has_32bit and has_64bit:
-                    continue
-
-            if self.reg_mode == 64 and self.strict_mode and self._contains_bit_ops(instructions, REG32_SET):
-                continue
-
-            if self.reg_mode == 32 and self.strict_mode and self._contains_bit_ops(instructions, REG64_SET):
-                continue
-
-            # push src; pop dst pattern
-            if "push" in instructions and "pop" in instructions:
-                src_match = re.search(r"push\s+([a-z0-9]+)", instructions)
-                dst_match = re.search(r"pop\s+([a-z0-9]+)", instructions)
-                if src_match and dst_match:
-                    src_reg = src_match.group(1)
-                    dst_reg = dst_match.group(1)
-
-                    if self._should_include_registers(src_reg, dst_reg):
-                        self.register_transfers[(src_reg, dst_reg)].append(gadget)
-
-            # mov dst, src pattern
-            mov_matches = re.findall(r"mov\s+([a-z0-9]+),\s+([a-z0-9]+)", instructions)
-            for match in mov_matches:
-                dst_reg = match[0]
-                src_reg = match[1]
-
-                if self._should_include_registers(src_reg, dst_reg):
-                    self.register_transfers[(src_reg, dst_reg)].append(gadget)
-
-            # xchg reg1, reg2 or xchg reg2, reg1 (both are equivalent)
-            xchg_matches = re.findall(r"xchg\s+([a-z0-9]+),\s+([a-z0-9]+)", instructions)
-            for match in xchg_matches:
-                reg1 = match[0]
-                reg2 = match[1]
-
-                if self._should_include_registers(reg1, reg2):
-                    self.register_transfers[(reg1, reg2)].append(gadget)
-                    self.register_transfers[(reg2, reg1)].append(gadget)
-
-            # Check for direct register moves with different instruction variants
-            if instructions.endswith("ret;"):
-                for reg32 in ["eax", "ebx", "ecx", "edx", "esi", "edi"]:
-                    for reg32_src in ["eax", "ebx", "ecx", "edx", "esi", "edi"]:
-                        pattern = f"mov {reg32}, {reg32_src};"
-
-                        if pattern in instructions:
-                            reg64_map = {
-                                "eax": "rax",
-                                "ebx": "rbx",
-                                "ecx": "rcx",
-                                "edx": "rdx",
-                                "esi": "rsi",
-                                "edi": "rdi",
-                            }
-                            src_reg64 = reg64_map.get(reg32_src, reg32_src)
-                            dst_reg64 = reg64_map.get(reg32, reg32)
-
-                            # For 32-bit mode, keep the original registers
-                            # For 64-bit mode, use the mapped registers
-                            if self.reg_mode == 32:
-                                if self._should_include_registers(reg32_src, reg32):
-                                    self.register_transfers[(reg32_src, reg32)].append(gadget)
-                            elif self.reg_mode == 64:
-                                if self._should_include_registers(src_reg64, dst_reg64):
-                                    self.register_transfers[(src_reg64, dst_reg64)].append(gadget)
-                            else:
-                                if reg32_src in REG32_SET and reg32 in REG32_SET:
-                                    self.register_transfers[(reg32_src, reg32)].append(gadget)
-                                if src_reg64 in REG64_SET and dst_reg64 in REG64_SET:
-                                    self.register_transfers[(src_reg64, dst_reg64)].append(gadget)
-
-                        pattern = f"xchg {reg32}, {reg32_src};"
-                        if pattern in instructions:
-                            reg64_map = {
-                                "eax": "rax",
-                                "ebx": "rbx",
-                                "ecx": "rcx",
-                                "edx": "rdx",
-                                "esi": "rsi",
-                                "edi": "rdi",
-                            }
-                            reg1_64 = reg64_map.get(reg32, reg32)
-                            reg2_64 = reg64_map.get(reg32_src, reg32_src)
-
-                            if self.reg_mode == 32:
-                                if self._should_include_registers(reg32, reg32_src):
-                                    self.register_transfers[(reg32, reg32_src)].append(gadget)
-                                    self.register_transfers[(reg32_src, reg32)].append(gadget)
-                            elif self.reg_mode == 64:
-                                if self._should_include_registers(reg1_64, reg2_64):
-                                    self.register_transfers[(reg1_64, reg2_64)].append(gadget)
-                                    self.register_transfers[(reg2_64, reg1_64)].append(gadget)
-                            else:
-                                # No mode specified, include both
-                                if reg32 in REG32_SET and reg32_src in REG32_SET:
-                                    self.register_transfers[(reg32, reg32_src)].append(gadget)
-                                    self.register_transfers[(reg32_src, reg32)].append(gadget)
-                                if reg1_64 in REG64_SET and reg2_64 in REG64_SET:
-                                    self.register_transfers[(reg1_64, reg2_64)].append(gadget)
-                                    self.register_transfers[(reg2_64, reg1_64)].append(gadget)
-
-                # Handle r8-r15 registers explicitly
-                for i in range(8, 16):
-                    for j in range(8, 16):
-                        src_reg = f"r{i}"
-                        dst_reg = f"r{j}"
-
-                        if self._should_include_registers(src_reg, dst_reg):
-                            # mov instruction
-                            pattern = f"mov {dst_reg}, {src_reg};"
-                            if pattern in instructions:
-                                self.register_transfers[(src_reg, dst_reg)].append(gadget)
-
-                            # xchg instruction
-                            pattern = f"xchg {src_reg}, {dst_reg};"
-                            if pattern in instructions:
-                                self.register_transfers[(src_reg, dst_reg)].append(gadget)
-                                self.register_transfers[(dst_reg, src_reg)].append(gadget)
-
-                            # reverse order of xchg
-                            pattern = f"xchg {dst_reg}, {src_reg};"
-                            if pattern in instructions:
-                                self.register_transfers[(src_reg, dst_reg)].append(gadget)
-                                self.register_transfers[(dst_reg, src_reg)].append(gadget)
+            for src_reg, dst_reg in transfers:
+                self.register_transfers[(src_reg, dst_reg)].append(gadget)
 
     def find_transfer_chain(
         self,
@@ -359,12 +227,19 @@ class Chainsmoker:
         if all_solutions:
             self.cli.print("Brute force mode: Finding all possible solutions")
 
-        if self.reg_mode == 32 and (src_reg not in REG32_SET or dst_reg not in REG32_SET):
-            self.cli.print("Error: In 32-bit mode, must use 32-bit registers (e.g., eax, ecx)", "error")
+        # Check if registers are compatible with the current architecture and mode
+        if not self.architecture.is_register_compatible(src_reg, self.reg_mode):
+            self.cli.print(
+                f"Error: Register '{src_reg}' is not compatible with {self.architecture.name} {self.reg_mode}-bit mode",
+                "error",
+            )
             return []
 
-        if self.reg_mode == 64 and (src_reg not in REG64_SET or dst_reg not in REG64_SET):
-            self.cli.print("Error: In 64-bit mode, must use 64-bit registers (e.g., rax, rcx)", "error")
+        if not self.architecture.is_register_compatible(dst_reg, self.reg_mode):
+            self.cli.print(
+                f"Error: Register '{dst_reg}' is not compatible with {self.architecture.name} {self.reg_mode}-bit mode",
+                "error",
+            )
             return []
 
         if src_reg == dst_reg:
@@ -475,19 +350,21 @@ class Chainsmoker:
             for j, gadget in enumerate(chain):
                 warning = ""
 
-                if self.reg_mode:
-                    if self.reg_mode == 64 and self._contains_bit_ops(gadget.instructions, REG32_SET):
-                        warning = "[yellow]32-bit registers may zero extend to 64-bit[/yellow]"
-                    elif self.reg_mode == 32 and self._contains_bit_ops(gadget.instructions, REG64_SET):
-                        warning = "[yellow]64-bit registers may be incompatible with 32-bit mode[/yellow]"
+                if self.reg_mode and self._contains_incompatible_registers(gadget.instructions):
+                    warning = f"[yellow]Instructions may contain registers incompatible with {self.architecture.name} {self.reg_mode}-bit mode[/yellow]"
 
                 address = f"[bold blue]{gadget.address}[/bold blue]"
 
                 instructions = gadget.instructions
-                instructions = re.sub(r"\b(mov|push|pop|xchg)\b", r"[bold green]\1[/bold green]", instructions)
+                # Highlight common instruction types
+                instructions = re.sub(
+                    r"\b(mov|push|pop|xchg|stp|ldp|add|sub)\b", r"[bold green]\1[/bold green]", instructions
+                )
 
-                for reg in REG32_SET | REG64_SET:
-                    instructions = re.sub(r"\b" + reg + r"\b", r"[cyan]\g<0>[/cyan]", instructions)
+                # Highlight registers from all register sets for this architecture
+                all_regs = self.architecture.get_registers_for_mode()
+                for reg in sorted(all_regs, key=len, reverse=True):  # Sort by length to avoid partial matches
+                    instructions = re.sub(r"\b" + re.escape(reg) + r"\b", r"[cyan]\g<0>[/cyan]", instructions)
 
                 table.add_row(f"{j + 1}", address, instructions, warning)
 

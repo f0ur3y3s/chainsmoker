@@ -8,9 +8,27 @@ def main():
     cli = CLIManager()
     args = parse_args(cli)
 
+    # Convert old mode parameter to new architecture and reg_mode
+    architecture = getattr(args, "arch", "x64")  # Default to x64
+    reg_mode = None
+
+    # Handle backward compatibility with --mode flag
+    if hasattr(args, "mode") and args.mode:
+        if args.mode == 32:
+            architecture = "x86"
+            reg_mode = "32"
+        elif args.mode == 64:
+            architecture = "x64"
+            reg_mode = "64"
+
+    # Override with --arch if provided
+    if hasattr(args, "arch") and args.arch:
+        architecture = args.arch
+
     analyzer = Chainsmoker(
         Path(args.file),
-        reg_mode=args.mode,
+        architecture=architecture,
+        reg_mode=reg_mode,
         strict_mode=args.strict,
         verbose=args.verbose,
         cli=cli,
@@ -25,8 +43,11 @@ def main():
     strict_str = " (strict mode)" if analyzer.strict_mode else ""
     cli.print(f"Analyzed [bold green]{len(analyzer.gadgets)}[/] gadgets")
 
-    reg_mode_str = f" ([bold]{analyzer.reg_mode}[/]-bit mode{strict_str})" if analyzer.reg_mode else ""
-    cli.print(f"Found [bold green]{len(analyzer.register_transfers)}[/] different register transfers{reg_mode_str}")
+    arch_str = f" ([bold]{analyzer.architecture.name}[/] architecture"
+    reg_mode_str = f", {analyzer.reg_mode}-bit mode{strict_str})" if analyzer.reg_mode else ")"
+    cli.print(
+        f"Found [bold green]{len(analyzer.register_transfers)}[/] different register transfers{arch_str}{reg_mode_str}"
+    )
 
     if not chain:
         table = cli.create_table(
